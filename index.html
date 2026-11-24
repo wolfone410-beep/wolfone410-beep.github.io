@@ -33,6 +33,7 @@ button{font:inherit;color:inherit;border:0;cursor:pointer}
 .big{width:100%;padding:16px;border-radius:14px;background:var(--accent);color:#06101f;font-size:18px;font-weight:800}
 .ghost{background:var(--panel);border:1px solid var(--line);padding:10px 14px;border-radius:10px;font-weight:600}
 #msg{min-height:1.5em;color:#ffb3b6}
+#diag{background:#2a1c0c;border:1px solid #5a3a12;color:#ffd79a;border-radius:10px;padding:10px 12px;line-height:1.6}
 .small{font-size:12px;color:var(--muted)}
 
 /* 카메라 화면 */
@@ -104,6 +105,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   </div>
   <button class="big" id="startBtn">카메라 켜고 시작</button>
   <div id="msg" role="status"></div>
+  <div id="diag" class="small" hidden></div>
   <p class="small">영상은 이 핸드폰 안에서만 처리되고 어디에도 전송되지 않습니다. 카메라 권한을 물으면 "허용"을 눌러주세요.</p>
   <button class="ghost" id="qrOpen">이 앱의 QR 코드 보기</button>
 </section>
@@ -171,11 +173,35 @@ const save = () => { try { localStorage.setItem("osc_cfg", JSON.stringify(cfg));
 
 // ===================================================== 카카오톡 등 인앱 브라우저 → 외부 브라우저로
 const ua = navigator.userAgent;
+const isAndroid = /Android/i.test(ua), isIOS = /iPhone|iPad|iPod/i.test(ua);
+const inApp = /KAKAOTALK|NAVER\(inapp|Instagram|FBAN|FBAV|Line\/|DaumApps|everytimeApp|BAND\/|; wv\)/i.test(ua);
 if (/KAKAOTALK/i.test(ua)) {
   location.href = "kakaotalk://web/openExternal?url=" + encodeURIComponent(location.href);
 } else if (/Line\//i.test(ua) && !/openExternalBrowser/.test(location.search)) {
   location.href = location.href + (location.search ? "&" : "?") + "openExternalBrowser=1";
+} else if (inApp && isAndroid) {
+  // 네이버·인스타·밴드 등 앱 안 브라우저 → 크롬으로 열기
+  location.href = "intent://" + location.href.replace(/^https?:\/\//, "") + "#Intent;scheme=https;package=com.android.chrome;end";
 }
+
+// 이 폰에서 돌아갈 수 있는지 미리 점검
+function checkEnv() {
+  const p = [];
+  if (inApp) p.push(isIOS ? "앱 안 브라우저에서는 카메라가 막혀요. 오른쪽 위(또는 아래) 메뉴에서 'Safari로 열기'를 눌러주세요."
+                           : "앱 안 브라우저에서는 카메라가 막혀요. 메뉴에서 'Chrome으로 열기' 또는 '다른 브라우저로 열기'를 눌러주세요.");
+  if (!window.isSecureContext) p.push("https 주소가 아니라서 카메라를 쓸 수 없어요.");
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) p.push("이 브라우저는 카메라 기능을 지원하지 않아요. Chrome이나 Safari 최신 버전으로 열어주세요.");
+  if (!window.WebAssembly) p.push("이 브라우저는 인식 기능(WebAssembly)을 지원하지 않아요. 브라우저를 업데이트해 주세요.");
+  const ios = ua.match(/OS (\d+)_\d+.* like Mac OS X/);
+  if (ios && +ios[1] < 15) p.push(`iOS ${ios[1]} 버전은 너무 오래돼서 작동하지 않을 수 있어요. iOS 15 이상으로 업데이트해 주세요.`);
+  const cr = ua.match(/Chrome\/(\d+)/);
+  if (cr && +cr[1] < 90) p.push(`Chrome ${cr[1]} 버전은 오래됐어요. Play 스토어에서 Chrome을 업데이트해 주세요.`);
+  let gl = null; try { gl = document.createElement("canvas").getContext("webgl2"); } catch (e) {}
+  if (!gl) p.push("이 폰은 그래픽 가속을 못 써서 느리게 동작할 수 있어요.");
+  return p;
+}
+const envProblems = checkEnv();
+if (envProblems.length) { $("diag").hidden = false; $("diag").innerHTML = "⚠ " + envProblems.join("<br>⚠ "); }
 
 // ===================================================== 거리 계산
 export function estimate(lm, W, H, f) {
@@ -207,6 +233,9 @@ window.__estimate = estimate;   // 테스트용
 // ===================================================== 화면 요소
 const video = document.createElement("video");
 video.playsInline = true; video.muted = true; video.autoplay = true;
+video.setAttribute("playsinline", ""); video.setAttribute("muted", "");
+video.style.cssText = "position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none";
+document.body.appendChild(video);   // 아이폰은 화면에 붙은 비디오만 계속 재생함
 const cv = $("cv"), ctx = cv.getContext("2d");
 const COLOR = ["#21a35a", "#f2b21b", "#e5323a"], NAME = ["안전", "주의", "위험"];
 let landmarker = null, stream = null, running = false, lastT = -1, people = [];
@@ -284,14 +313,36 @@ async function openCamera() {
   cv.width = video.videoWidth; cv.height = video.videoHeight;
 }
 
-async function loadModel() {
-  const { PoseLandmarker, FilesetResolver } = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs");
-  const files = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
-  const make = delegate => PoseLandmarker.createFromOptions(files, {
-    baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task", delegate },
-    runningMode: "VIDEO", numPoses: 4, minPoseDetectionConfidence: 0.5, minTrackingConfidence: 0.5
+// 인식 모델 (자세 인식 + 사람 확인용 탐지). GPU가 안 되면 CPU로 자동 전환
+let vision = null, files = null, backend = "GPU", detector = null;
+function status(t) { const el = $("loading"); el.hidden = false; el.innerHTML = t; }
+async function loadModel(delegate) {
+  if (!vision) {
+    status("인식 프로그램 내려받는 중…");
+    vision = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs");
+    files = await vision.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+  }
+  const make = d => vision.PoseLandmarker.createFromOptions(files, {
+    baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task", delegate: d },
+    runningMode: "VIDEO", numPoses: 3, minPoseDetectionConfidence: 0.6, minPosePresenceConfidence: 0.6, minTrackingConfidence: 0.5
   });
-  try { return await make("GPU"); } catch (e) { return await make("CPU"); }
+  const order = delegate ? [delegate] : ["GPU", "CPU"];
+  let lastErr;
+  for (const d of order) {
+    try {
+      status(`사람 인식 모델 준비 중 (${d === "GPU" ? "그래픽 가속" : "일반 모드"})…<br>처음에는 10~20초 걸릴 수 있어요`);
+      const lm = await make(d); backend = d; return lm;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
+async function loadDetector() {        // 사람 확인용 (실패해도 앱은 계속 동작)
+  try {
+    detector = await vision.ObjectDetector.createFromOptions(files, {
+      baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite", delegate: backend },
+      runningMode: "VIDEO", scoreThreshold: 0.45, maxResults: 5, categoryAllowlist: ["person"]
+    });
+  } catch (e) { detector = null; }
 }
 
 function explain(e) {
@@ -316,8 +367,10 @@ async function start() {
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch (e) {}
   running = true; requestAnimationFrame(loop);
   if (!landmarker) {
-    try { landmarker = await loadModel(); $("loading").hidden = true; }
-    catch (e) { $("loading").innerHTML = "사람 인식 모델을 불러오지 못했어요.<br>인터넷 연결을 확인하고 새로고침해 주세요."; }
+    const slow = setTimeout(() => { if (!landmarker) status($("loading").innerHTML + "<br><br>오래 걸리고 있어요. 인터넷(와이파이)을 확인해 주세요."); }, 25000);
+    try { landmarker = await loadModel(); $("loading").hidden = true; loadDetector(); }
+    catch (e) { status("이 폰에서 사람 인식 모델을 실행하지 못했어요.<br>Chrome(안드로이드) 또는 Safari(아이폰) 최신 버전으로 열어주세요.<br><small>(" + (e && e.message ? e.message : e) + ")</small>"); }
+    clearTimeout(slow);
   }
 }
 
@@ -344,9 +397,37 @@ function renderDetails(list) {
   }
 }
 
+// ===================================================== 사람만 인식
+let personBoxes = [], boxesAt = -1e9, lastDet = -1e9, detErr = 0, errCount = 0, switching = false;
+const visOf = p => p.visibility ?? 1;
+function isPerson(lm, W, H, now) {
+  const seen = lm.filter(p => visOf(p) >= 0.5 && p.x > -0.05 && p.x < 1.05 && p.y > -0.05 && p.y < 1.05);
+  const sh = visOf(lm[11]) >= 0.5 && visOf(lm[12]) >= 0.5, face = visOf(lm[0]) >= 0.5;
+  if (seen.length < 6 || !(sh || face)) return false;               // 사람 모양이 아니면 제외
+  const strong = lm.filter(p => visOf(p) >= 0.8).length >= 10 && visOf(lm[11]) >= 0.8 && visOf(lm[12]) >= 0.8;
+  if (!detector || now - boxesAt > 1500) return strong || !detector && seen.length >= 8;
+  // 사람 탐지 상자와 겹치는지 확인
+  const xs = seen.map(p => p.x * W), ys = seen.map(p => p.y * H);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  const hit = personBoxes.some(b => {
+    const mx = b.width * 0.15, my = b.height * 0.15;
+    return cx >= b.originX - mx && cx <= b.originX + b.width + mx && cy >= b.originY - my && cy <= b.originY + b.height + my;
+  });
+  return hit || strong;
+}
+async function switchToCPU() {
+  switching = true; landmarker = null;
+  try { landmarker = await loadModel("CPU"); detector = null; await loadDetector(); toast("그래픽 가속이 안 돼서 일반 모드로 전환했어요", 3500); }
+  catch (e) { status("이 폰에서는 사람 인식이 동작하지 않아요.<br>다른 브라우저(Chrome·Safari)로 열어 주세요."); }
+  $("loading").hidden = !!landmarker; errCount = 0; switching = false;
+}
+
 // ===================================================== 메인 루프
 function loop() {
   if (!running) return;
+  if (video.videoWidth && (cv.width !== video.videoWidth || cv.height !== video.videoHeight)) {
+    cv.width = video.videoWidth; cv.height = video.videoHeight;      // 폰을 돌리면 크기가 바뀜
+  }
   const W = cv.width, H = cv.height, mirror = cfg.facing === "user";
   ctx.save();
   if (mirror) { ctx.translate(W, 0); ctx.scale(-1, 1); }
@@ -354,9 +435,20 @@ function loop() {
   ctx.restore();
 
   const now = performance.now();
-  if (landmarker && video.currentTime !== lastT) {
+  if (landmarker && !switching && video.readyState >= 2 && video.currentTime !== lastT) {
     lastT = video.currentTime;
-    try { people = landmarker.detectForVideo(video, now).landmarks || []; } catch (e) { people = []; }
+    try {
+      people = (landmarker.detectForVideo(video, now).landmarks || []).filter(lm => isPerson(lm, W, H, now));
+      errCount = 0;
+    } catch (e) {
+      people = [];
+      if (++errCount >= 3 && backend === "GPU") switchToCPU();   // 그래픽 가속 오류 → 일반 모드로
+    }
+    if (detector && now - lastDet > 300) {
+      lastDet = now;
+      try { personBoxes = detector.detectForVideo(video, now).detections.map(d => d.boundingBox); boxesAt = now; detErr = 0; }
+      catch (e) { if (++detErr >= 3) detector = null; }
+    }
   }
 
   const f = focal(W, cfg.hfov);
