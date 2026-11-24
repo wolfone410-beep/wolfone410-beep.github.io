@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#14161a">
+<title>개구부 안전 카메라</title>
+<style>
+/* 카메라 앱: 어두운 단일 테마 (현장 화면 가독성 우선) */
+:root{
+  --bg:#14161a; --panel:#1d2026; --line:#2c3038; --fg:#f1f2f4; --muted:#9aa1ad;
+  --safe:#21a35a; --warn:#f2b21b; --danger:#e5323a; --accent:#5aa0ff;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif}
+button{font:inherit;color:inherit;border:0;cursor:pointer}
+[hidden]{display:none!important}
+
+/* 시작 화면 */
+#intro{min-height:100%;display:flex;flex-direction:column;justify-content:center;gap:18px;
+  padding:calc(24px + env(safe-area-inset-top)) max(22px,env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(22px,env(safe-area-inset-left));
+  max-width:520px;margin:0 auto}
+#intro h1{font-size:28px;line-height:1.25;margin:0;letter-spacing:-.02em}
+#intro .tag{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--warn);
+  border:1.5px solid var(--warn);border-radius:6px;padding:3px 8px;align-self:flex-start}
+#intro p{margin:0;color:var(--muted)}
+.levels{display:grid;gap:8px;margin:4px 0}
+.levels div{display:flex;align-items:center;gap:10px;background:var(--panel);border-radius:10px;padding:10px 12px}
+.levels i{width:12px;height:12px;border-radius:50%;flex:none}
+.levels b{min-width:34px}
+.big{width:100%;padding:16px;border-radius:14px;background:var(--accent);color:#06101f;font-size:18px;font-weight:800}
+.ghost{background:var(--panel);border:1px solid var(--line);padding:10px 14px;border-radius:10px;font-weight:600}
+#msg{min-height:1.5em;color:#ffb3b6}
+.small{font-size:12px;color:var(--muted)}
+
+/* 카메라 화면 */
+#app{position:fixed;inset:0;display:flex;flex-direction:column;background:#000}
+#banner{padding:calc(10px + env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) 10px max(14px,env(safe-area-inset-left));
+  font-size:clamp(17px,5vw,24px);font-weight:800;line-height:1.3;background:var(--safe);color:#fff}
+#banner.l1{background:var(--warn);color:#1b1400}
+#banner.l2{background:var(--danger);animation:blink .5s steps(1) infinite}
+@keyframes blink{50%{background:#7d0f14}}
+#stage{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
+#stage.l2{box-shadow:inset 0 0 0 10px var(--danger)}
+canvas{max-width:100%;max-height:100%;display:block}
+#loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;
+  padding:20px;background:rgba(0,0,0,.6);font-weight:700}
+#toast{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:rgba(0,0,0,.78);
+  padding:8px 14px;border-radius:999px;font-size:14px;white-space:nowrap;max-width:92%;overflow:hidden;text-overflow:ellipsis}
+#bottom{background:var(--bg);padding:12px max(14px,env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));
+  display:flex;flex-direction:column;gap:10px}
+.row{display:flex;align-items:center;gap:10px}
+#dist{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums;min-width:110px}
+#distLbl{font-size:12px;color:var(--muted)}
+.gauge{position:relative;flex:1;height:14px;border-radius:7px;overflow:hidden;display:flex}
+.gauge span{height:100%}
+#marker{position:absolute;top:-4px;width:6px;height:22px;background:#fff;border-radius:3px;transform:translateX(-50%);transition:left .15s}
+.gwrap{position:relative;flex:1;padding:4px 0}
+.ticks{position:relative;height:14px;font-size:11px;color:var(--muted)}
+.ticks span{position:absolute;transform:translateX(-50%)}
+.btns{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+#details{display:flex;flex-direction:column;gap:6px;max-height:122px;overflow:auto}
+#details .it{display:grid;grid-template-columns:10px 64px 1fr;align-items:center;gap:10px;background:var(--panel);border-radius:10px;padding:7px 10px;font-size:14px}
+#details .it i{width:10px;height:10px;border-radius:50%}
+#details .it b{font-variant-numeric:tabular-nums}
+#details .it span{color:var(--muted);font-size:13px;min-width:0}
+#details .it.l2{background:#3a1215}
+#details .it.l2 span{color:#ffc2c5}
+#details .none{color:var(--muted);font-size:13px;text-align:center;padding:4px}
+.btns button{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 4px;font-size:13px;font-weight:600}
+.btns button.on{border-color:var(--accent);color:var(--accent)}
+
+/* 설정 시트 */
+#sheet{position:fixed;inset:auto 0 0 0;background:var(--panel);border-top:1px solid var(--line);border-radius:16px 16px 0 0;
+  padding:16px max(18px,env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) max(18px,env(safe-area-inset-left));
+  display:flex;flex-direction:column;gap:14px;z-index:5}
+#sheet h2{margin:0;font-size:17px}
+#sheet label{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--muted)}
+#sheet label b{color:var(--fg)}
+input[type=range]{width:100%;accent-color:var(--accent)}
+#qrBox{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;z-index:6;padding:20px}
+#qrCard{background:#fff;color:#111;border-radius:16px;padding:22px;max-width:360px;width:100%;text-align:center;display:flex;flex-direction:column;gap:10px}
+#qrCard h3{margin:0;font-size:20px}
+#qrImg svg{width:100%;height:auto;display:block}
+#qrCard .u{font-size:12px;word-break:break-all;color:#555}
+#qrCard button{background:#111;color:#fff;border-radius:10px;padding:10px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){#banner.l2{animation:none}}
+</style>
+</head>
+<body>
+
+<!-- 시작 화면 -->
+<section id="intro">
+  <span class="tag">개구부 안전</span>
+  <h1>개구부 안전 카메라</h1>
+  <p>카메라에 비친 근로자를 인식해서 개구부(카메라)까지의 거리를 재고, 가까워지면 경고합니다.</p>
+  <div class="levels">
+    <div><i style="background:var(--safe)"></i><b>안전</b><span id="lvSafe">2 m 밖</span></div>
+    <div><i style="background:var(--warn)"></i><b>주의</b><span id="lvWarn">2 m 이내</span></div>
+    <div><i style="background:var(--danger)"></i><b>위험</b><span id="lvDanger">1 m 이내 · 음성 안내·진동</span></div>
+  </div>
+  <button class="big" id="startBtn">카메라 켜고 시작</button>
+  <div id="msg" role="status"></div>
+  <p class="small">영상은 이 핸드폰 안에서만 처리되고 어디에도 전송되지 않습니다. 카메라 권한을 물으면 "허용"을 눌러주세요.</p>
+  <button class="ghost" id="qrOpen">이 앱의 QR 코드 보기</button>
+</section>
+
+<!-- 카메라 화면 -->
+<section id="app" hidden>
+  <div id="banner">카메라 준비 중</div>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="loading">사람 인식 모델 준비 중…<br>처음에는 10~20초 걸릴 수 있어요</div>
+    <div id="toast" hidden></div>
+  </div>
+  <div id="bottom">
+    <div class="row">
+      <div><div id="distLbl">가장 가까운 사람</div><div id="dist">—</div></div>
+      <div class="gwrap">
+        <div class="gauge"><span id="gD" style="background:var(--danger)"></span><span id="gW" style="background:var(--warn)"></span><span style="flex:1;background:var(--safe)"></span></div>
+        <div id="marker" hidden></div>
+        <div class="ticks"><span style="left:0;transform:none">개구부</span><span id="tD"></span><span id="tW"></span></div>
+      </div>
+    </div>
+    <div id="details"><div class="none">화면에 인식된 근로자가 없어요</div></div>
+    <div class="btns">
+      <button id="calBtn">거리 보정</button>
+      <button id="soundBtn" class="on">음성 안내</button>
+      <button id="flipBtn">카메라 전환</button>
+      <button id="setBtn">설정</button>
+    </div>
+  </div>
+</section>
+
+<!-- 설정 -->
+<section id="sheet" hidden>
+  <h2>설정</h2>
+  <label for="warnR">주의 거리 <b id="warnV"></b><input type="range" id="warnR" min="1" max="5" step="0.5"></label>
+  <label for="dangerR">위험 거리 <b id="dangerV"></b><input type="range" id="dangerR" min="0.5" max="4" step="0.5"></label>
+  <label for="fovR">카메라 화각 <b id="fovV"></b><input type="range" id="fovR" min="50" max="90" step="1"></label>
+  <p class="small" style="margin:0">거리가 계속 틀리면 "거리 보정"을 쓰세요: 카메라에서 1.5 m 떨어진 곳에 한 명만 서서 누르면 됩니다.</p>
+  <div class="row"><button class="ghost" id="resetBtn">보정 초기화</button><button class="ghost" id="qrOpen2">QR 코드 보기</button><button class="big" id="closeSet" style="padding:10px">닫기</button></div>
+</section>
+
+<!-- QR 코드 -->
+<section id="qrBox" hidden>
+  <div id="qrCard">
+    <h3>개구부 안전 카메라</h3>
+    <div id="qrImg"></div>
+    <div>핸드폰 카메라로 찍으면 바로 열립니다</div>
+    <div class="u" id="qrUrl"></div>
+    <button id="qrClose">닫기</button>
+  </div>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+<script type="module">
+// ===================================================== 기본 설정
+const SHOULDER_M = 0.40, TORSO_M = 0.48, NOSE_ANKLE_M = 1.70 * 0.87, VIS = 0.5;
+const L = { nose: 0, lSh: 11, rSh: 12, lHip: 23, rHip: 24, lAnk: 27, rAnk: 28 };
+const CAL_DIST = 1.5;
+const $ = id => document.getElementById(id);
+let cfg = { warn: 2, danger: 1, hfov: 67, scale: 1, sound: "voice", facing: "environment" };
+try { Object.assign(cfg, JSON.parse(localStorage.getItem("osc_cfg") || "{}")); } catch (e) {}
+if (typeof cfg.sound !== "string") cfg.sound = cfg.sound === false ? "off" : "voice";
+const SOUND_NAME = { voice: "음성 안내", beep: "경보음", off: "소리 끔" };
+const save = () => { try { localStorage.setItem("osc_cfg", JSON.stringify(cfg)); } catch (e) {} };
+
+// ===================================================== 카카오톡 등 인앱 브라우저 → 외부 브라우저로
+const ua = navigator.userAgent;
+if (/KAKAOTALK/i.test(ua)) {
+  location.href = "kakaotalk://web/openExternal?url=" + encodeURIComponent(location.href);
+} else if (/Line\//i.test(ua) && !/openExternalBrowser/.test(location.search)) {
+  location.href = location.href + (location.search ? "&" : "?") + "openExternalBrowser=1";
+}
+
+// ===================================================== 거리 계산
+export function estimate(lm, W, H, f) {
+  const P = i => ({ x: lm[i].x * W, y: lm[i].y * H });
+  const ok = i => (lm[i].visibility ?? 1) >= VIS && lm[i].x >= 0 && lm[i].x <= 1 && lm[i].y >= 0 && lm[i].y <= 1;
+  const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const ests = [];
+  if (ok(L.lSh) && ok(L.rSh)) {
+    const px = d(P(L.lSh), P(L.rSh));
+    if (px > 5) ests.push([f * SHOULDER_M / px, "어깨"]);
+    if (ok(L.lHip) && ok(L.rHip)) {
+      const t = d(mid(P(L.lSh), P(L.rSh)), mid(P(L.lHip), P(L.rHip)));
+      if (t > 5) ests.push([f * TORSO_M / t, "상체"]);
+    }
+  }
+  if (ok(L.nose) && (ok(L.lAnk) || ok(L.rAnk))) {
+    const ank = Math.max(ok(L.lAnk) ? P(L.lAnk).y : 0, ok(L.rAnk) ? P(L.rAnk).y : 0);
+    const px = ank - P(L.nose).y;
+    if (px > 5) ests.push([f * NOSE_ANKLE_M / px, "키"]);
+  }
+  if (!ests.length) return [null, null];
+  return ests.reduce((a, b) => (b[0] < a[0] ? b : a));     // 가장 가까운 값(안전 우선)
+}
+const focal = (W, hfov) => (W / 2) / Math.tan((hfov * Math.PI / 180) / 2);
+const levelOf = d => d == null ? 0 : d <= cfg.danger ? 2 : d <= cfg.warn ? 1 : 0;
+window.__estimate = estimate;   // 테스트용
+
+// ===================================================== 화면 요소
+const video = document.createElement("video");
+video.playsInline = true; video.muted = true; video.autoplay = true;
+const cv = $("cv"), ctx = cv.getContext("2d");
+const COLOR = ["#21a35a", "#f2b21b", "#e5323a"], NAME = ["안전", "주의", "위험"];
+let landmarker = null, stream = null, running = false, lastT = -1, people = [];
+let recent = [], lastSeen = [-1e9, -1e9, -1e9], audio = null, lastBeep = 0, toastT = 0, wakeLock = null, rawClosest = null;
+
+function toast(t, ms = 2500) { $("toast").textContent = t; $("toast").hidden = false; clearTimeout(toastT); toastT = setTimeout(() => $("toast").hidden = true, ms); }
+function syncLabels() {
+  $("lvSafe").textContent = `${cfg.warn} m 밖`;
+  $("lvWarn").textContent = `${cfg.warn} m 이내`;
+  $("lvDanger").textContent = `${cfg.danger} m 이내 · ${cfg.sound === "voice" ? "음성 안내" : cfg.sound === "beep" ? "경보음" : "화면"}·진동`;
+  $("warnR").value = cfg.warn; $("dangerR").value = cfg.danger; $("fovR").value = cfg.hfov;
+  $("warnV").textContent = cfg.warn + " m"; $("dangerV").textContent = cfg.danger + " m"; $("fovV").textContent = cfg.hfov + "°";
+  const mx = Math.max(cfg.warn * 1.5, 3);
+  $("gD").style.width = (cfg.danger / mx * 100) + "%";
+  $("gW").style.width = ((cfg.warn - cfg.danger) / mx * 100) + "%";
+  $("tD").style.left = (cfg.danger / mx * 100) + "%"; $("tD").textContent = cfg.danger + "m";
+  $("tW").style.left = (cfg.warn / mx * 100) + "%"; $("tW").textContent = cfg.warn + "m";
+  $("soundBtn").textContent = SOUND_NAME[cfg.sound];
+  $("soundBtn").classList.toggle("on", cfg.sound !== "off");
+}
+syncLabels();
+
+// ===================================================== 경보
+// 한국어 음성 안내
+let koVoice = null, lastSpeak = 0, spokenLevel = 0;
+function pickVoice() {
+  const vs = window.speechSynthesis ? speechSynthesis.getVoices() : [];
+  koVoice = vs.find(v => /ko(-|_)?KR/i.test(v.lang)) || vs.find(v => /^ko/i.test(v.lang)) || null;
+}
+if (window.speechSynthesis) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+function speak(text, urgent) {
+  if (cfg.sound !== "voice" || !window.speechSynthesis) return;
+  if (urgent) speechSynthesis.cancel(); else if (speechSynthesis.speaking) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "ko-KR"; u.rate = 1.05; u.volume = 1; if (koVoice) u.voice = koVoice;
+  speechSynthesis.speak(u);
+  lastSpeak = performance.now();
+}
+const meter = d => d.toFixed(1).replace(/\.0$/, "") + "미터";
+function narrate(disp, top) {
+  const now = performance.now();
+  const where = top ? `${top.pos} 근로자, ` : "";
+  if (disp !== spokenLevel) {
+    if (disp === 2) speak(`위험! ${where}개구부까지 ${top ? meter(top.d) : "매우 가깝습니다"}. 즉시 물러나세요.`, true);
+    else if (disp === 1) speak(`주의하세요. ${where}개구부까지 ${top ? meter(top.d) + "입니다" : "가까워지고 있습니다"}.`, spokenLevel === 2);
+    else if (spokenLevel > 0) speak("안전 거리로 벗어났습니다.", true);
+    spokenLevel = disp;
+  } else if (disp === 2 && now - lastSpeak > 4500) {
+    speak(`위험! ${where}즉시 물러나세요.`, true);          // 위험 구역에 머무르면 4.5초마다 반복
+  } else if (disp === 1 && now - lastSpeak > 9000) {
+    speak(`주의. ${where}개구부까지 ${top ? meter(top.d) : "가깝습니다"}.`, false);
+  }
+}
+
+function alarm() {
+  const now = performance.now();
+  if (now - lastBeep < 1200) return;
+  lastBeep = now;
+  if (navigator.vibrate) navigator.vibrate([250, 120, 250]);
+  if (cfg.sound !== "beep" || !audio) return;
+  const o = audio.createOscillator(), g = audio.createGain();
+  o.type = "square"; o.frequency.value = 1600; g.gain.value = 0.12;
+  o.connect(g).connect(audio.destination); o.start(); o.stop(audio.currentTime + 0.3);
+}
+
+// ===================================================== 카메라
+async function openCamera() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: false, video: { facingMode: { ideal: cfg.facing }, width: { ideal: 1280 }, height: { ideal: 720 } }
+  });
+  video.srcObject = stream;
+  await video.play();
+  if (!video.videoWidth) await new Promise(r => video.onloadedmetadata = r);
+  cv.width = video.videoWidth; cv.height = video.videoHeight;
+}
+
+async function loadModel() {
+  const { PoseLandmarker, FilesetResolver } = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs");
+  const files = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+  const make = delegate => PoseLandmarker.createFromOptions(files, {
+    baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task", delegate },
+    runningMode: "VIDEO", numPoses: 4, minPoseDetectionConfidence: 0.5, minTrackingConfidence: 0.5
+  });
+  try { return await make("GPU"); } catch (e) { return await make("CPU"); }
+}
+
+function explain(e) {
+  const n = e && e.name;
+  if (!window.isSecureContext) return "https 주소에서만 카메라를 쓸 수 있어요. QR 코드로 다시 들어와 주세요.";
+  if (n === "NotAllowedError") return "카메라 권한이 거부됐어요. 주소창의 자물쇠(또는 카메라) 아이콘에서 카메라를 '허용'으로 바꾼 뒤 새로고침하세요.";
+  if (n === "NotReadableError") return "다른 앱이 카메라를 쓰고 있어요. 카메라를 쓰는 앱을 닫고 다시 시도하세요.";
+  if (n === "NotFoundError") return "카메라를 찾지 못했어요.";
+  return "카메라를 켜지 못했어요. Chrome이나 Safari로 열어 주세요. (" + (n || e) + ")";
+}
+
+async function start() {
+  $("startBtn").disabled = true; $("msg").textContent = "카메라를 켜는 중…";
+  try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch (e) {}
+  speak("개구부 안전 카메라를 시작합니다.", true);
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    $("msg").textContent = explain({ name: "NoMedia" }); $("startBtn").disabled = false; return;
+  }
+  try { await openCamera(); }
+  catch (e) { $("msg").textContent = explain(e); $("startBtn").disabled = false; return; }
+  $("intro").hidden = true; $("app").hidden = false; $("msg").textContent = "";
+  try { wakeLock = await navigator.wakeLock?.request("screen"); } catch (e) {}
+  running = true; requestAnimationFrame(loop);
+  if (!landmarker) {
+    try { landmarker = await loadModel(); $("loading").hidden = true; }
+    catch (e) { $("loading").innerHTML = "사람 인식 모델을 불러오지 못했어요.<br>인터넷 연결을 확인하고 새로고침해 주세요."; }
+  }
+}
+
+// ===================================================== 위치별 상세 정보
+const POS = (cx, W) => cx < W / 3 ? "왼쪽" : cx < W * 2 / 3 ? "가운데" : "오른쪽";
+const ADVICE = ["안전 거리 유지 중", "개구부 쪽으로 더 가지 마세요", "즉시 개구부에서 물러나세요"];
+let detailKey = "";
+function renderDetails(list) {
+  const key = list.map(p => p.pos + p.lv + (p.d == null ? "-" : p.d.toFixed(1))).join("|");
+  if (key === detailKey) return;           // 바뀔 때만 다시 그림
+  detailKey = key;
+  const box = $("details");
+  if (!list.length) { box.innerHTML = '<div class="none">화면에 인식된 근로자가 없어요</div>'; return; }
+  box.innerHTML = "";
+  for (const p of list.slice(0, 4)) {
+    const it = document.createElement("div");
+    it.className = "it" + (p.lv === 2 ? " l2" : "");
+    const dot = document.createElement("i"); dot.style.background = COLOR[p.lv];
+    const b = document.createElement("b"); b.textContent = p.pos;
+    const sp = document.createElement("span");
+    sp.textContent = p.d == null ? "거리 확인 중 (어깨가 보이게 서 주세요)"
+      : `${NAME[p.lv]} · ${p.d.toFixed(1)} m · ${ADVICE[p.lv]}`;
+    it.append(dot, b, sp); box.append(it);
+  }
+}
+
+// ===================================================== 메인 루프
+function loop() {
+  if (!running) return;
+  const W = cv.width, H = cv.height, mirror = cfg.facing === "user";
+  ctx.save();
+  if (mirror) { ctx.translate(W, 0); ctx.scale(-1, 1); }
+  ctx.drawImage(video, 0, 0, W, H);
+  ctx.restore();
+
+  const now = performance.now();
+  if (landmarker && video.currentTime !== lastT) {
+    lastT = video.currentTime;
+    try { people = landmarker.detectForVideo(video, now).landmarks || []; } catch (e) { people = []; }
+  }
+
+  const f = focal(W, cfg.hfov);
+  let cur = 0, closest = null; rawClosest = null;
+  const lw = Math.max(3, W / 250), fs = Math.round(W / 26);
+  // 화면을 왼쪽 · 가운데 · 오른쪽 3구역으로 나눠 표시
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = Math.max(1, W / 600); ctx.setLineDash([W / 60, W / 80]);
+  for (const k of [1, 2]) { ctx.beginPath(); ctx.moveTo(W * k / 3, 0); ctx.lineTo(W * k / 3, H); ctx.stroke(); }
+  ctx.setLineDash([]); ctx.font = `700 ${Math.round(fs * 0.7)}px -apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif`;
+  ctx.fillStyle = "rgba(255,255,255,.75)";
+  ["왼쪽", "가운데", "오른쪽"].forEach((t, k) => ctx.fillText(t, W * k / 3 + fs * 0.4, H - fs * 0.5));
+  ctx.restore();
+  const found = [];
+  for (let lm of people) {
+    if (mirror) lm = lm.map(p => ({ ...p, x: 1 - p.x }));
+    // 사람 박스 (보이는 관절 기준)
+    const vis = lm.filter(p => (p.visibility ?? 1) > 0.3);
+    if (!vis.length) continue;
+    let x1 = Math.min(...vis.map(p => p.x)) * W, x2 = Math.max(...vis.map(p => p.x)) * W;
+    let y1 = Math.min(...vis.map(p => p.y)) * H, y2 = Math.max(...vis.map(p => p.y)) * H;
+    let [raw, how] = estimate(lm, W, H, f);
+    // 너무 가까워서 어깨가 화면 밖으로 나가면 → 몸 폭(약 0.45 m)으로 거리 추정 (안전 우선)
+    if (raw == null) {
+      const bw = Math.max(x2 - x1, Math.min(W, (Math.max(...lm.map(p => p.x)) - Math.min(...lm.map(p => p.x))) * W));
+      if (bw > W * 0.05) { raw = f * 0.45 / bw; how = "몸 폭"; }
+    }
+    const d = raw == null ? null : raw * cfg.scale;
+    const lv = levelOf(d); cur = Math.max(cur, lv);
+    if (d != null && (closest == null || d < closest)) { closest = d; rawClosest = how === "몸 폭" ? null : raw; }
+    const pad = (x2 - x1) * 0.15; x1 -= pad; x2 += pad; y1 -= pad * 1.5; y2 += pad * 0.5;
+    ctx.lineWidth = lw; ctx.strokeStyle = COLOR[lv]; ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    // 어깨·상체 선
+    ctx.beginPath();
+    for (const [a, b] of [[11, 12], [11, 23], [12, 24], [23, 24]]) {
+      if ((lm[a].visibility ?? 1) >= VIS && (lm[b].visibility ?? 1) >= VIS) {
+        ctx.moveTo(lm[a].x * W, lm[a].y * H); ctx.lineTo(lm[b].x * W, lm[b].y * H);
+      }
+    }
+    ctx.stroke();
+    const pos = POS((x1 + x2) / 2, W);
+    found.push({ pos, d, lv, how });
+    const label = d == null ? `${pos} · 사람` : `${pos} · ${NAME[lv]} ${d.toFixed(1)} m`;
+    ctx.font = `800 ${fs}px -apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif`;
+    const tw = ctx.measureText(label).width + fs * 0.6, ty = Math.max(fs * 1.4, y1);
+    ctx.fillStyle = COLOR[lv]; ctx.fillRect(x1, ty - fs * 1.35, tw, fs * 1.35);
+    ctx.fillStyle = lv === 1 ? "#1b1400" : "#fff"; ctx.fillText(label, x1 + fs * 0.3, ty - fs * 0.32);
+  }
+
+  // 최근 5회 중앙값으로 흔들림 줄이기
+  recent.push(closest); if (recent.length > 5) recent.shift();
+  const vals = recent.filter(v => v != null).sort((a, b) => a - b);
+  const smooth = vals.length ? vals[Math.floor(vals.length / 2)] : null;
+  if (closest != null) cur = Math.max(cur, levelOf(smooth));
+  for (const lv of [1, 2]) if (cur >= lv) lastSeen[lv] = now;
+  const disp = now - lastSeen[2] < 1000 ? 2 : now - lastSeen[1] < 1000 ? 1 : 0;
+
+  // 상단 배너 + 하단 거리
+  const b = $("banner");
+  b.className = disp ? "l" + disp : "";
+  b.textContent = !landmarker ? "카메라 연결됨 · 인식 준비 중"
+    : disp === 2 ? "위험! 개구부에 너무 가깝습니다 — 즉시 물러나세요"
+    : disp === 1 ? `주의: 개구부 ${cfg.warn} m 이내 접근`
+    : people.length ? "안전 — 위험 거리 밖" : "안전 — 개구부 주변 접근자 없음";
+  $("stage").classList.toggle("l2", disp === 2);
+  if (disp === 2) alarm();
+  found.sort((a, b) => (a.d ?? 99) - (b.d ?? 99));
+  if (landmarker) narrate(disp, found[0] && found[0].d != null ? found[0] : null);
+  renderDetails(found);
+  $("dist").textContent = smooth == null ? "—" : smooth.toFixed(2) + " m";
+  $("dist").style.color = smooth == null ? "" : COLOR[levelOf(smooth)];
+  const mx = Math.max(cfg.warn * 1.5, 3);
+  $("marker").hidden = smooth == null;
+  if (smooth != null) $("marker").style.left = Math.min(100, smooth / mx * 100) + "%";
+
+  requestAnimationFrame(loop);
+}
+
+// ===================================================== 버튼
+$("startBtn").onclick = start;
+$("calBtn").onclick = () => {
+  if (people.length !== 1 || !rawClosest) return toast(`보정하려면 한 명만 ${CAL_DIST} m 거리에 서 주세요`);
+  cfg.scale = CAL_DIST / rawClosest; save(); recent = [];
+  toast(`보정 완료 (${CAL_DIST} m 기준 ×${cfg.scale.toFixed(2)})`);
+};
+$("soundBtn").onclick = () => {
+  cfg.sound = { voice: "beep", beep: "off", off: "voice" }[cfg.sound]; save(); syncLabels();
+  try { audio?.resume(); } catch (e) {}
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  spokenLevel = 0;
+  if (cfg.sound === "voice") speak("음성 안내를 켰습니다.", true);
+  toast(SOUND_NAME[cfg.sound]);
+};
+$("flipBtn").onclick = async () => {
+  cfg.facing = cfg.facing === "environment" ? "user" : "environment"; save();
+  try { await openCamera(); toast(cfg.facing === "user" ? "전면 카메라" : "후면 카메라"); }
+  catch (e) { toast(explain(e), 4000); }
+};
+$("setBtn").onclick = () => $("sheet").hidden = false;
+$("closeSet").onclick = () => $("sheet").hidden = true;
+$("warnR").oninput = e => { cfg.warn = +e.target.value; if (cfg.danger >= cfg.warn) cfg.danger = cfg.warn - 0.5; save(); syncLabels(); };
+$("dangerR").oninput = e => { cfg.danger = +e.target.value; if (cfg.danger >= cfg.warn) cfg.warn = cfg.danger + 0.5; save(); syncLabels(); };
+$("fovR").oninput = e => { cfg.hfov = +e.target.value; save(); syncLabels(); };
+$("resetBtn").onclick = () => { cfg.scale = 1; save(); toast("보정을 초기화했어요"); };
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "visible" && running) { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch (e) {} }
+});
+
+// QR 코드 (이 페이지 주소)
+function showQR() {
+  const url = location.href.split("#")[0].replace(/[?&]openExternalBrowser=1/, "");
+  $("qrUrl").textContent = url;
+  try {
+    const q = qrcode(0, "M"); q.addData(url); q.make();
+    $("qrImg").innerHTML = q.createSvgTag({ cellSize: 8, margin: 2, scalable: true });
+  } catch (e) { $("qrImg").textContent = "QR 코드를 만들지 못했어요."; }
+  $("qrBox").hidden = false;
+}
+$("qrOpen").onclick = showQR; $("qrOpen2").onclick = showQR;
+$("qrClose").onclick = () => $("qrBox").hidden = true;
+</script>
+</body>
+</html>
