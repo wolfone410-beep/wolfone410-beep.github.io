@@ -101,7 +101,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <div class="levels">
     <div><i style="background:var(--safe)"></i><b>안전</b><span id="lvSafe">2 m 밖</span></div>
     <div><i style="background:var(--warn)"></i><b>주의</b><span id="lvWarn">2 m 이내</span></div>
-    <div><i style="background:var(--danger)"></i><b>위험</b><span id="lvDanger">1 m 이내 · 음성 안내·진동</span></div>
+    <div><i style="background:var(--danger)"></i><b>위험</b><span id="lvDanger">1 m 이내 · 경보음·음성 안내·진동</span></div>
   </div>
   <button class="big" id="startBtn">카메라 켜고 시작</button>
   <div id="msg" role="status"></div>
@@ -130,7 +130,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     <div id="details"><div class="none">화면에 인식된 근로자가 없어요</div></div>
     <div class="btns">
       <button id="calBtn">거리 보정</button>
-      <button id="soundBtn" class="on">음성 안내</button>
+      <button id="soundBtn" class="on">경보음+음성</button>
       <button id="flipBtn">카메라 전환</button>
       <button id="setBtn">설정</button>
     </div>
@@ -168,7 +168,7 @@ const $ = id => document.getElementById(id);
 let cfg = { warn: 2, danger: 1, hfov: 67, scale: 1, sound: "voice", facing: "environment" };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem("osc_cfg") || "{}")); } catch (e) {}
 if (typeof cfg.sound !== "string") cfg.sound = cfg.sound === false ? "off" : "voice";
-const SOUND_NAME = { voice: "음성 안내", beep: "경보음", off: "소리 끔" };
+const SOUND_NAME = { voice: "경보음+음성", beep: "경보음만", off: "소리 끔" };
 const save = () => { try { localStorage.setItem("osc_cfg", JSON.stringify(cfg)); } catch (e) {} };
 
 // ===================================================== 카카오톡 등 인앱 브라우저 → 외부 브라우저로
@@ -245,7 +245,7 @@ function toast(t, ms = 2500) { $("toast").textContent = t; $("toast").hidden = f
 function syncLabels() {
   $("lvSafe").textContent = `${cfg.warn} m 밖`;
   $("lvWarn").textContent = `${cfg.warn} m 이내`;
-  $("lvDanger").textContent = `${cfg.danger} m 이내 · ${cfg.sound === "voice" ? "음성 안내" : cfg.sound === "beep" ? "경보음" : "화면"}·진동`;
+  $("lvDanger").textContent = `${cfg.danger} m 이내 · ${cfg.sound === "voice" ? "경보음·음성 안내" : cfg.sound === "beep" ? "경보음" : "화면"}·진동`;
   $("warnR").value = cfg.warn; $("dangerR").value = cfg.danger; $("fovR").value = cfg.hfov;
   $("warnV").textContent = cfg.warn + " m"; $("dangerV").textContent = cfg.danger + " m"; $("fovV").textContent = cfg.hfov + "°";
   const mx = Math.max(cfg.warn * 1.5, 3);
@@ -283,22 +283,27 @@ function narrate(disp, top) {
     else if (disp === 1) speak(`주의하세요. ${where}개구부까지 ${top ? meter(top.d) + "입니다" : "가까워지고 있습니다"}.`, spokenLevel === 2);
     else if (spokenLevel > 0) speak("안전 거리로 벗어났습니다.", true);
     spokenLevel = disp;
-  } else if (disp === 2 && now - lastSpeak > 4500) {
-    speak(`위험! ${where}즉시 물러나세요.`, true);          // 위험 구역에 머무르면 4.5초마다 반복
+  } else if (disp === 2 && now - lastSpeak > 3500 && !(window.speechSynthesis && speechSynthesis.speaking)) {
+    speak(`위험! ${where}개구부까지 ${top ? meter(top.d) : "매우 가깝습니다"}. 즉시 물러나세요.`, true);   // 위험 구역에 있는 동안 계속 반복
   } else if (disp === 1 && now - lastSpeak > 9000) {
     speak(`주의. ${where}개구부까지 ${top ? meter(top.d) : "가깝습니다"}.`, false);
   }
 }
 
+// 위험 구역에 있는 동안 계속 울리는 2음 경보 (삐-뽀)
 function alarm() {
   const now = performance.now();
-  if (now - lastBeep < 1200) return;
+  if (now - lastBeep < 650) return;
   lastBeep = now;
-  if (navigator.vibrate) navigator.vibrate([250, 120, 250]);
-  if (cfg.sound !== "beep" || !audio) return;
-  const o = audio.createOscillator(), g = audio.createGain();
-  o.type = "square"; o.frequency.value = 1600; g.gain.value = 0.12;
-  o.connect(g).connect(audio.destination); o.start(); o.stop(audio.currentTime + 0.3);
+  if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
+  if (cfg.sound === "off" || !audio) return;
+  if (audio.state === "suspended") { try { audio.resume(); } catch (e) {} }
+  const t = audio.currentTime, vol = cfg.sound === "voice" ? 0.07 : 0.14;   // 음성과 함께일 땐 조금 작게
+  for (const [fq, dt] of [[1500, 0], [1100, 0.25]]) {
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type = "square"; o.frequency.value = fq; g.gain.value = vol;
+    o.connect(g).connect(audio.destination); o.start(t + dt); o.stop(t + dt + 0.22);
+  }
 }
 
 // ===================================================== 카메라
@@ -340,7 +345,7 @@ async function loadDetector() {        // 사람 확인용 (실패해도 앱은 
   try {
     detector = await vision.ObjectDetector.createFromOptions(files, {
       baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite", delegate: backend },
-      runningMode: "VIDEO", scoreThreshold: 0.45, maxResults: 5, categoryAllowlist: ["person"]
+      runningMode: "VIDEO", scoreThreshold: 0.5, maxResults: 5, categoryAllowlist: ["person"]
     });
   } catch (e) { detector = null; }
 }
@@ -401,19 +406,54 @@ function renderDetails(list) {
 let personBoxes = [], boxesAt = -1e9, lastDet = -1e9, detErr = 0, errCount = 0, switching = false;
 const visOf = p => p.visibility ?? 1;
 function isPerson(lm, W, H, now) {
+  const v = i => visOf(lm[i]);
   const seen = lm.filter(p => visOf(p) >= 0.5 && p.x > -0.05 && p.x < 1.05 && p.y > -0.05 && p.y < 1.05);
-  const sh = visOf(lm[11]) >= 0.5 && visOf(lm[12]) >= 0.5, face = visOf(lm[0]) >= 0.5;
-  if (seen.length < 6 || !(sh || face)) return false;               // 사람 모양이 아니면 제외
-  const strong = lm.filter(p => visOf(p) >= 0.8).length >= 10 && visOf(lm[11]) >= 0.8 && visOf(lm[12]) >= 0.8;
-  if (!detector || now - boxesAt > 1500) return strong || !detector && seen.length >= 8;
-  // 사람 탐지 상자와 겹치는지 확인
+  // ① 사람 몸 모양 검사
+  if (seen.length < 8) return false;                                   // 관절이 충분히 보여야 함
+  if (!(v(11) >= 0.6 && v(12) >= 0.6)) return false;                   // 양쪽 어깨 필수
+  if (!(v(0) >= 0.5 || (v(23) >= 0.5 && v(24) >= 0.5))) return false; // 얼굴 또는 골반
+  const shW = Math.hypot((lm[11].x - lm[12].x) * W, (lm[11].y - lm[12].y) * H);
+  if (shW < 5) return false;
+  if (v(0) >= 0.5 && lm[0].y * H > (lm[11].y + lm[12].y) / 2 * H + shW * 0.3) return false;   // 머리가 어깨보다 아래면 제외
+  if (v(23) >= 0.5 && v(24) >= 0.5) {
+    const tor = Math.hypot((lm[11].x + lm[12].x - lm[23].x - lm[24].x) / 2 * W, (lm[11].y + lm[12].y - lm[23].y - lm[24].y) / 2 * H);
+    const r = tor / shW;
+    if (r < 0.6 || r > 5) return false;                                // 상체 길이 ÷ 어깨 너비 비율이 사람답지 않으면 제외
+  }
   const xs = seen.map(p => p.x * W), ys = seen.map(p => p.y * H);
-  const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
-  const hit = personBoxes.some(b => {
-    const mx = b.width * 0.15, my = b.height * 0.15;
-    return cx >= b.originX - mx && cx <= b.originX + b.width + mx && cy >= b.originY - my && cy <= b.originY + b.height + my;
-  });
-  return hit || strong;
+  const bx1 = Math.min(...xs), bx2 = Math.max(...xs), by1 = Math.min(...ys), by2 = Math.max(...ys);
+  const veryClose = bx2 - bx1 > W * 0.6;                               // 화면을 꽉 채울 만큼 가까우면 통과(안전 우선)
+  // ② 사람 탐지 모델과 겹치는지 확인
+  if (detector && now - boxesAt < 1500) {
+    const area = Math.max(1, (bx2 - bx1) * (by2 - by1));
+    const hit = personBoxes.some(b => {
+      const mx = b.width * 0.1, my = b.height * 0.1;
+      const ix = Math.max(0, Math.min(bx2, b.originX + b.width + mx) - Math.max(bx1, b.originX - mx));
+      const iy = Math.max(0, Math.min(by2, b.originY + b.height + my) - Math.max(by1, b.originY - my));
+      return ix * iy / area >= 0.5;                                    // 자세 영역의 절반 이상이 사람 상자 안에 있어야 함
+    });
+    return hit || veryClose;
+  }
+  // 탐지 모델이 아직 준비 안 됐으면 아주 확실한 경우만
+  return lm.filter(p => visOf(p) >= 0.8).length >= 12 || veryClose;
+}
+// ③ 연속으로 3번 이상 보인 사람만 인정 (순간적인 오인식 제거)
+let tracks = [];
+function confirmTracks(list, W, now) {
+  const out = [];
+  for (const lm of list) {
+    const vs = lm.filter(p => visOf(p) >= 0.5);
+    const cx = vs.reduce((a, p) => a + p.x, 0) / vs.length, cy = vs.reduce((a, p) => a + p.y, 0) / vs.length;
+    let t = tracks.find(t => !t.used && Math.hypot(t.cx - cx, t.cy - cy) < 0.15);
+    if (!t) { t = { cx, cy, hits: 0, last: now, ok: false }; tracks.push(t); }
+    t.used = true; t.hits++; t.cx = cx; t.cy = cy; t.last = now;
+    if (t.hits >= 3) t.ok = true;                                   // 연속 3번 보이면 사람으로 확정
+    if (t.ok) out.push(lm);
+  }
+  tracks.forEach(t => { if (!t.used && !t.ok) t.hits = 0; });     // 이번 인식에서 빠지면 처음부터 다시 셈(연속 3번 필요)
+  tracks = tracks.filter(t => now - t.last < 700);
+  tracks.forEach(t => t.used = false);
+  return out;
 }
 async function switchToCPU() {
   switching = true; landmarker = null;
@@ -438,7 +478,7 @@ function loop() {
   if (landmarker && !switching && video.readyState >= 2 && video.currentTime !== lastT) {
     lastT = video.currentTime;
     try {
-      people = (landmarker.detectForVideo(video, now).landmarks || []).filter(lm => isPerson(lm, W, H, now));
+      people = confirmTracks((landmarker.detectForVideo(video, now).landmarks || []).filter(lm => isPerson(lm, W, H, now)), W, now);
       errCount = 0;
     } catch (e) {
       people = [];
@@ -539,7 +579,7 @@ $("soundBtn").onclick = () => {
   try { audio?.resume(); } catch (e) {}
   if (window.speechSynthesis) speechSynthesis.cancel();
   spokenLevel = 0;
-  if (cfg.sound === "voice") speak("음성 안내를 켰습니다.", true);
+  if (cfg.sound === "voice") speak("경보음과 음성 안내를 켰습니다.", true);
   toast(SOUND_NAME[cfg.sound]);
 };
 $("flipBtn").onclick = async () => {
