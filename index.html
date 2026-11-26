@@ -89,6 +89,23 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 #qrCard button{background:#111;color:#fff;border-radius:10px;padding:10px}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){#banner.l2{animation:none}}
+.btns{grid-template-columns:repeat(5,1fr)!important}
+/* 위험 기록 화면 */
+#recs{position:fixed;inset:0;z-index:7;background:var(--bg);overflow:auto;
+  padding:calc(14px + env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));
+  display:flex;flex-direction:column;gap:12px}
+#recs h2{margin:0;font-size:20px}
+.rhead{display:flex;align-items:center;justify-content:space-between;gap:10px}
+#recList{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.rc{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;padding:0;text-align:left;display:flex;flex-direction:column}
+.rc img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:#000}
+.rc span{padding:6px 8px;font-size:12px;line-height:1.4;color:var(--muted)}
+.rc b{color:#ff8a8f;font-variant-numeric:tabular-nums}
+.empty{color:var(--muted);text-align:center;padding:40px 0}
+#viewer{position:fixed;inset:0;z-index:8;background:#000;display:flex;flex-direction:column;gap:10px;justify-content:center;
+  padding:calc(14px + env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left))}
+#viewer img{max-width:100%;max-height:68vh;object-fit:contain;margin:0 auto;display:block}
+#vInfo{color:#ddd;font-size:14px;text-align:center}
 </style>
 </head>
 <body>
@@ -108,6 +125,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <div id="diag" class="small" hidden></div>
   <p class="small">영상은 이 핸드폰 안에서만 처리되고 어디에도 전송되지 않습니다. 카메라 권한을 물으면 "허용"을 눌러주세요.</p>
   <button class="ghost" id="qrOpen">이 앱의 QR 코드 보기</button>
+  <button class="ghost" id="recOpen0">위험 기록 보기</button>
 </section>
 
 <!-- 카메라 화면 -->
@@ -129,9 +147,10 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     </div>
     <div id="details"><div class="none">화면에 인식된 근로자가 없어요</div></div>
     <div class="btns">
-      <button id="calBtn">거리 보정</button>
+      <button id="calBtn">보정</button>
       <button id="soundBtn" class="on">경보음+음성</button>
-      <button id="flipBtn">카메라 전환</button>
+      <button id="flipBtn">전환</button>
+      <button id="recOpen">기록</button>
       <button id="setBtn">설정</button>
     </div>
   </div>
@@ -145,6 +164,19 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <label for="fovR">카메라 화각 <b id="fovV"></b><input type="range" id="fovR" min="50" max="90" step="1"></label>
   <p class="small" style="margin:0">거리가 계속 틀리면 "거리 보정"을 쓰세요: 카메라에서 1.5 m 떨어진 곳에 한 명만 서서 누르면 됩니다.</p>
   <div class="row"><button class="ghost" id="resetBtn">보정 초기화</button><button class="ghost" id="qrOpen2">QR 코드 보기</button><button class="big" id="closeSet" style="padding:10px">닫기</button></div>
+</section>
+
+<!-- 위험 기록 -->
+<section id="recs" hidden>
+  <div class="rhead"><h2>위험 기록 <span id="recN" class="small"></span></h2><button class="ghost" id="recClose">닫기</button></div>
+  <p class="small" style="margin:0">경보가 울린 순간의 화면이 이 핸드폰 안에 자동 저장돼요 (최근 200장). 위험 구역에 계속 있으면 10초마다 한 장씩 저장돼요.</p>
+  <div class="row"><button class="ghost" id="recSaveAll" style="flex:1">전체 저장·공유</button><button class="ghost" id="recClear" style="flex:1">모두 삭제</button></div>
+  <div id="recList"></div>
+</section>
+<section id="viewer" hidden>
+  <img id="vImg" alt="위험 장면">
+  <div id="vInfo"></div>
+  <div class="row"><button class="big" id="vSave" style="flex:2;padding:12px">사진 저장·공유</button><button class="ghost" id="vDel" style="flex:1">삭제</button><button class="ghost" id="vClose" style="flex:1">닫기</button></div>
 </section>
 
 <!-- QR 코드 -->
@@ -556,6 +588,8 @@ function loop() {
   $("stage").classList.toggle("l2", disp === 2);
   if (disp === 2) alarm();
   found.sort((a, b) => (a.d ?? 99) - (b.d ?? 99));
+  if (disp === 2 && (prevDisp < 2 || now - lastCap > 10000)) captureDanger(found.find(p => p.d != null), found.length);
+  prevDisp = disp;
   if (landmarker) narrate(disp, found[0] && found[0].d != null ? found[0] : null);
   renderDetails(found);
   $("dist").textContent = smooth == null ? "—" : smooth.toFixed(2) + " m";
@@ -596,6 +630,105 @@ $("resetBtn").onclick = () => { cfg.scale = 1; save(); toast("보정을 초기�
 document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState === "visible" && running) { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch (e) {} }
 });
+
+// ===================================================== 위험 장면 저장 (이 핸드폰 안 저장공간)
+const MAX_REC = 200;
+let dbp = null, recCount = 0, lastCap = -1e9, prevDisp = 0, urls = [], viewing = null;
+function db() {
+  if (!dbp) dbp = new Promise((res, rej) => {
+    const r = indexedDB.open("osc_records", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("caps", { keyPath: "id", autoIncrement: true });
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+  return dbp;
+}
+async function store(mode, fn) {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const t = d.transaction("caps", mode), req = fn(t.objectStore("caps"));
+    t.oncomplete = () => res(req && req.result); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+  });
+}
+const allRecs = () => store("readonly", s => s.getAll());
+const pad2 = n => String(n).padStart(2, "0");
+const fmt = t => { const d = new Date(t); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; };
+const fname = t => "위험_" + fmt(t).replace(/[-:]/g, "").replace(" ", "_") + ".jpg";
+function updateRecBtn() { $("recOpen").textContent = recCount ? `기록 ${recCount}` : "기록"; }
+async function refreshCount() { try { recCount = await store("readonly", s => s.count()); updateRecBtn(); } catch (e) {} }
+async function captureDanger(top, n) {
+  lastCap = performance.now();
+  try {
+    const c = document.createElement("canvas"); c.width = cv.width; c.height = cv.height;
+    const x = c.getContext("2d"); x.drawImage(cv, 0, 0);
+    const fs = Math.max(14, Math.round(c.width / 32)), h = fs * 1.9, t = Date.now();
+    x.fillStyle = "rgba(0,0,0,.75)"; x.fillRect(0, c.height - h, c.width, h);
+    x.fillStyle = "#fff"; x.font = `700 ${fs}px -apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif`;
+    x.fillText(`위험 · ${fmt(t)} · ${top ? `${top.pos} ${top.d.toFixed(2)} m` : "근접"} · 인식 ${n}명`, fs * 0.5, c.height - h * 0.32);
+    const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.8));
+    if (!blob) return;
+    await store("readwrite", s => s.add({ time: t, dist: top ? +top.d.toFixed(2) : null, pos: top ? top.pos : "", people: n, blob }));
+    recCount++; updateRecBtn(); toast("위험 장면을 저장했어요");
+    if (recCount > MAX_REC) {                          // 오래된 기록부터 지움
+      const keys = await store("readonly", s => s.getAllKeys());
+      await store("readwrite", s => keys.slice(0, keys.length - MAX_REC).forEach(k => s.delete(k)));
+      recCount = MAX_REC; updateRecBtn();
+    }
+  } catch (e) { toast("이 브라우저에서는 기록을 저장할 수 없어요 (시크릿 모드인지 확인)", 4000); }
+}
+async function openRecs() {
+  $("recs").hidden = false; urls.forEach(URL.revokeObjectURL); urls = [];
+  const list = $("recList"); list.innerHTML = "";
+  let recs = [];
+  try { recs = (await allRecs()).reverse(); } catch (e) {}
+  recCount = recs.length; updateRecBtn();
+  $("recN").textContent = `${recs.length}장`;
+  if (!recs.length) { list.innerHTML = '<div class="empty">아직 저장된 위험 장면이 없어요</div>'; return; }
+  for (const r of recs) {
+    const u = URL.createObjectURL(r.blob); urls.push(u);
+    const b = document.createElement("button"); b.className = "rc";
+    const img = document.createElement("img"); img.src = u; img.alt = "위험 장면"; img.loading = "lazy";
+    const sp = document.createElement("span");
+    sp.innerHTML = `${fmt(r.time)}<br><b>${r.dist != null ? r.dist + " m" : "근접"}</b> · ${r.pos || "-"} · ${r.people}명`;
+    b.append(img, sp); b.onclick = () => openViewer(r, u); list.append(b);
+  }
+}
+function openViewer(r, u) {
+  viewing = r; $("vImg").src = u;
+  $("vInfo").textContent = `${fmt(r.time)} · ${r.dist != null ? r.dist + " m" : "근접"} · ${r.pos || "-"} · 인식 ${r.people}명`;
+  $("viewer").hidden = false;
+}
+// 저장: 핸드폰이 지원하면 공유창(갤러리 저장·카톡·드라이브), 아니면 파일 다운로드
+async function saveFiles(files) {
+  try {
+    if (navigator.canShare && navigator.canShare({ files })) { await navigator.share({ files, title: "개구부 위험 기록" }); return; }
+  } catch (e) { if (e && e.name === "AbortError") return; }
+  for (const f of files) {
+    const a = document.createElement("a"); a.href = URL.createObjectURL(f); a.download = f.name;
+    document.body.append(a); a.click(); a.remove();
+    await new Promise(r => setTimeout(r, 350));
+  }
+}
+$("recOpen").onclick = openRecs; $("recOpen0").onclick = openRecs;
+$("recClose").onclick = () => { $("recs").hidden = true; urls.forEach(URL.revokeObjectURL); urls = []; };
+$("vClose").onclick = () => $("viewer").hidden = true;
+$("vSave").onclick = () => viewing && saveFiles([new File([viewing.blob], fname(viewing.time), { type: "image/jpeg" })]);
+$("vDel").onclick = async () => {
+  if (!viewing) return;
+  await store("readwrite", s => s.delete(viewing.id)); $("viewer").hidden = true; openRecs();
+};
+$("recSaveAll").onclick = async () => {
+  const recs = await allRecs();
+  if (!recs.length) return toast("저장할 기록이 없어요");
+  const csv = "\ufeff시각,거리(m),위치,인원,파일\n" + recs.map(r => `${fmt(r.time)},${r.dist ?? ""},${r.pos},${r.people},${fname(r.time)}`).join("\n");
+  saveFiles([new File([csv], "위험기록_목록.csv", { type: "text/csv" }), ...recs.map(r => new File([r.blob], fname(r.time), { type: "image/jpeg" }))]);
+};
+let clearArm = 0;
+$("recClear").onclick = async () => {
+  if (Date.now() - clearArm > 3000) { clearArm = Date.now(); $("recClear").textContent = "한 번 더 누르면 삭제"; setTimeout(() => $("recClear").textContent = "모두 삭제", 3000); return; }
+  await store("readwrite", s => s.clear()); $("recClear").textContent = "모두 삭제"; toast("기록을 모두 지웠어요"); openRecs();
+};
+try { navigator.storage?.persist?.(); } catch (e) {}      // 브라우저가 기록을 임의로 지우지 않도록 요청
+refreshCount();
 
 // QR 코드 (이 페이지 주소)
 function showQR() {
